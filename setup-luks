@@ -1,0 +1,61 @@
+#!/bin/ash -e
+
+echo This script sets up a LUKS encrypted device, installs alpine, and configures
+echo the bootloader. If this system is not yet configured, run setup-alpine and
+echo skip the disk selection.
+
+if mount | grep '/mnt'
+then
+  echo "Error: /mnt already mounted"
+  exit
+fi
+
+echo -n "What's the block device to install on (empty to cancel) ? "
+read disk
+if [ -z "$disk" -o ! -b "$disk" ]
+then
+  echo "none specified or block device not found, aborting"
+  exit
+fi
+
+echo -e "o\nn\np\n1\n\n+100M\nn\np\n2\n\n\na\n1\nw\n" | fdisk $disk
+
+while :
+do
+  partprobe $disk
+  sleep 1
+  if [ $(ls -l $disk* | wc -l) -eq 3 ]
+  then
+    break
+  fi
+done
+
+cryptsetup luksFormat ${disk}2
+mkfs.ext4 ${disk}1
+cryptsetup luksOpen ${disk}2 newroot
+mkfs.ext4 /dev/mapper/newroot
+mount /dev/mapper/newroot /mnt
+mkdir /mnt/boot
+mount ${disk}1 /mnt/boot
+
+setup-disk /mnt
+
+sed -i 's/ext4/cryptsetup ext4/' /mnt/etc/mkinitfs/mkinitfs.conf
+
+uuid=$(blkid | grep ${disk}2 | cut -d'"' -f2)
+sed -i "s/\(^default_kernel_opts.*\)\"$/\1 cryptroot=UUID=$uuid cryptdm=root\"/" /mnt/etc/update-extlinux.conf
+sed -i 's/^root=UUID.*/root=\/dev\/mapper\/root/' /mnt/etc/update-extlinux.conf
+
+mount -o bind /dev /mnt/dev
+mount -o bind /sys /mnt/sys
+mount -t proc proc /mnt/proc
+
+chroot /mnt mkinitfs `ls /mnt/lib/modules`
+chroot /mnt update-extlinux
+
+dd bs=440 count=1 conv=notrunc if=/mnt/usr/share/syslinux/mbr.bin of=$disk
+
+for i in sys proc dev boot; do umount /mnt/$i;done
+umount /mnt
+cryptsetup luksClose newroot
+echo Finished. Remove installation medium and reboot
