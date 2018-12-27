@@ -1,5 +1,5 @@
-setup-alpine
-------------
+setup-luks
+----------
 
 This script sets up a LUKS encrypted device, installs alpine, and configures
 the bootloader. If this system is not yet configured, run setup-alpine and
